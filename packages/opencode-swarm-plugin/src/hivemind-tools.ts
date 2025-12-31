@@ -45,9 +45,19 @@ import {
 	type StatsResult,
 	type OperationResult,
 } from "./memory";
+import {
+	formatMemoryResults,
+	type MemoryResult,
+} from "./result-formatter";
 import * as os from "node:os";
 import * as path from "node:path";
 import { join } from "node:path";
+
+// ============================================================================
+// Decay Constants (90-day half-life)
+// ============================================================================
+
+const DECAY_HALF_LIFE_DAYS = 90;
 
 // ============================================================================
 // Type Re-exports (for backward compatibility with memory-tools.ts)
@@ -241,6 +251,18 @@ export const hivemind_store = tool({
 });
 
 /**
+ * Compute decay percentage based on age (90-day half-life)
+ * 
+ * @param ageDays - Age in days
+ * @returns Decay percentage (0-100, higher = more retained)
+ */
+function computeDecay(ageDays: number): number {
+	// Exponential decay: retention = 0.5 ^ (age / halfLife)
+	const retention = Math.pow(0.5, ageDays / DECAY_HALF_LIFE_DAYS);
+	return retention * 100;
+}
+
+/**
  * hivemind_find - Search all memories (learnings + sessions)
  */
 export const hivemind_find = tool({
@@ -280,7 +302,29 @@ export const hivemind_find = tool({
 			collection_filter: args.collection,
 		});
 
-		return JSON.stringify(result, null, 2);
+		// If expand=true, return full JSON
+		if (args.expand) {
+			return JSON.stringify(result, null, 2);
+		}
+
+		// Convert to MemoryResult format for compact display
+		const now = Date.now();
+		const memoryResults: MemoryResult[] = result.results.map((r) => {
+			const createdAt = new Date(r.createdAt).getTime();
+			const ageDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+			const decayPercent = computeDecay(ageDays);
+
+			return {
+				id: r.id.slice(0, 7), // Short ID
+				score: r.score,
+				age_days: ageDays,
+				decay_percent: decayPercent,
+				content: r.content,
+				collection: r.collection,
+			};
+		});
+
+		return formatMemoryResults(memoryResults, args.query);
 	},
 });
 
